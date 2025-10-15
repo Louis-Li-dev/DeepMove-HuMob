@@ -233,10 +233,21 @@ class TrajectoryDataset(Dataset):
             
             for d in days:
                 idx = df_u['d'] == d
-                sessions[d] = (
-                    [loc[i] for i in range(len(loc)) if idx.iloc[i]],
-                    [tim[i] for i in range(len(tim)) if idx.iloc[i]]
-                )
+                loc_day = [loc[i] for i in range(len(loc)) if idx.iloc[i]]
+                tim_day = [tim[i] for i in range(len(tim)) if idx.iloc[i]]
+                
+                # Deduplicate consecutive identical locations to reduce stationary bias
+                dedup_loc = []
+                dedup_tim = []
+                if loc_day:
+                    dedup_loc.append(loc_day[0])
+                    dedup_tim.append(tim_day[0])
+                    for i in range(1, len(loc_day)):
+                        if loc_day[i] != dedup_loc[-1]:
+                            dedup_loc.append(loc_day[i])
+                            dedup_tim.append(tim_day[i])
+                
+                sessions[d] = (dedup_loc, dedup_tim)
             
             # Create training samples for this user
             for cur_d_idx in range(1, len(days)):
@@ -393,10 +404,21 @@ class DeepmoveForecaster:
 
             for d in days:
                 idx = df_u['d'] == d
-                sessions[d] = (
-                    [loc[i] for i in range(len(loc)) if idx.iloc[i]],
-                    [tim[i] for i in range(len(tim)) if idx.iloc[i]]
-                )
+                loc_day = [loc[i] for i in range(len(loc)) if idx.iloc[i]]
+                tim_day = [tim[i] for i in range(len(tim)) if idx.iloc[i]]
+                
+                # Deduplicate consecutive identical locations to reduce stationary bias
+                dedup_loc = []
+                dedup_tim = []
+                if loc_day:
+                    dedup_loc.append(loc_day[0])
+                    dedup_tim.append(tim_day[0])
+                    for i in range(1, len(loc_day)):
+                        if loc_day[i] != dedup_loc[-1]:
+                            dedup_loc.append(loc_day[i])
+                            dedup_tim.append(tim_day[i])
+                
+                sessions[d] = (dedup_loc, dedup_tim)
             user_data[uid] = sessions
 
         logger.info(f"Preprocessed {len(user_data)} users for forecasting")
@@ -468,7 +490,11 @@ class DeepmoveForecaster:
                         seq_len_tensor
                     )
 
-                    pred_loc = torch.argmax(score[0, 0]).item()
+                    # Use temperature sampling for more diverse predictions
+                    temperature = 1.5  # Adjust for more/less diversity
+                    probs = F.softmax(score[0, 0] / temperature, dim=0)
+                    pred_loc = torch.multinomial(probs, 1).item()
+                    
                     x = (pred_loc // 200) + 1
                     y = (pred_loc % 200) + 1
 
